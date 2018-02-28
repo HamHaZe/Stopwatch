@@ -18,8 +18,11 @@ DELAYER EQU H'24'
 	movwf PORTB
 	
 start_loop:
+;   Turn on LED to show it's in the start loop
+	movlw B'00001100'
+	movwf PORTA
 ;   Test if either button is pressed
-	movlw B'00000010'
+	movlw B'00001110'   ;	Should be 00000010
 	subwf PORTA
 	btfsc STATUS,Z	    ;	If PORTA = W
 	goto reset_loop	    ;	goes to resetloop if reset button pressed
@@ -36,6 +39,10 @@ reset_loop:
 	goto start_loop
 	
 pause_loop:
+;   Turn on LED to show it's in pause loop
+	movlw PORTB
+	addlw B'00000001'
+	movwf PORTB
 ;   Holds the stopwatch in a loop while paused
 ;   Test if either button is pressed
 	movlw B'00000010'
