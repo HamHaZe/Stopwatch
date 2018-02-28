@@ -2,70 +2,146 @@
     
 __config _XT_OSC & _WDT_OFF & _PWRTE_ON
     
+;   Ross Hamer & Ramy Elabbadi
+	
 ;File Registers used by delay subroutine
-DELAY_COUNT1 EQU H'21'
-DELAY_COUNT2 EQU H'22'
-DELAY_COUNT3 EQU H'23'
-COUNTER EQU H'24'
-COUNTER1 EQU H'25'
-COUNTER2 EQU H'26'
-COUNTER3 EQU H'27'
-DELAY_PLEX EQU H'28'
-DIGIT1 EQU H'29'
-DIGIT2 EQU H'2A'
-DIGIT3 EQU H'2B'
-	ORG h'0'
-	bsf STATUS,5 ;select bank 1
-	    movlw B'00000000' ;set up port B as all outputs
-	    movwf TRISB
-	    movlw B'00000011'
-	    movwf TRISA
-	bcf STATUS,5 ;select bank 0
-	    movlw B'01000000'
-	    movwf PORTB
-	
-start_loop:
-;   Test if either button is pressed
-	movlw B'00001110'   ;	Should be 00000010
-	subwf PORTA
-	btfsc STATUS,Z	    ;	If PORTA = W
-	goto reset_loop	    ;	goes to resetloop if reset button pressed
-	
-	btfss STATUS,C	    ;	If PORTA < W
-	goto main	    ;	goes to main stopwatch code
-	
-	goto start_loop	    ;	Else loops back to start loop
-	
-reset_loop:
-;   Resets all counters
-	movlw B'0000000'
+DELAY_COUNT1	EQU H'21'
+DELAY_COUNT2	EQU H'22'
+DELAY_COUNT3	EQU H'23'
+DELAY_COUNT4	EQU H'30'
+COUNTER		EQU H'24'
+COUNTER1	EQU H'25'
+COUNTER2	EQU H'26'
+COUNTER3	EQU H'27'
+DELAY_PLEX	EQU H'28'
+DIGIT1		EQU H'29'
+DIGIT2		EQU H'2A'
+DIGIT3		EQU H'2B'
+Pause		EQU H'2C'
+Start		EQU H'2D'
+UnPause		EQU H'2E'
+Reset1		EQU H'2F'
+ORG h'0'
+clrf PORTA
+clrf PORTB
+bsf STATUS,5		;   Select bank 1
+movlw B'00000000'	;   Set up port B as all outputs
+movwf TRISB
+movlw B'00000001'
+movwf TRISA
+bcf STATUS,5		;   select bank 0
+movlw 0x00		;   Moves 0 to the working register
+call conversion		;   Calls PORTB outputs for zeroes
+movwf DIGIT1		;   
+movwf DIGIT2		;   Sets PORTB outputs for all digits
+movwf DIGIT3		;
+movlw 0xFF
+movwf COUNTER1		;
+movwf COUNTER2		;   Sets counters to max value so they overflow loop
+movwf COUNTER3		;
+goto Start_loop
+		
+preStart		;   Reset function
+	movlw 0x00
+	call conversion	;   Sets all DIGITs to 0
+	movwf DIGIT1
+	movwf DIGIT2
+	movwf DIGIT3
+	movlw 0xFF	;   Sets all COUNTERs to 0
 	movwf COUNTER1
-	movlw B'00000000'
 	movwf COUNTER2
-	movlw B'00000000'
 	movwf COUNTER3
-	goto start_loop
+	goto Start_loop
 	
-pause_loop:
-;   Holds the stopwatch in a loop while paused
-;   Test if either button is pressed
-	movlw B'00000010'
-	subwf PORTA
-	btfsc STATUS,Z	    ;	If PORTA = W
-	goto reset_loop	    ;	goes to resetloop if reset button pressed
+Start_loop		    ;   Initial start loop 
+	call plex_loop	    ;   Multiplexes display
+	call CheckStart	    ;   Checks to see if start button is pressed
+	goto Start_loop	    ;   Loops back to start_loop
+
+CheckStart		    ;	Checks whether start button pressed
+	movfw PORTA
+	andlw 0x01	    ;	Masks out final value of PORTA buttons
+	movwf Start	    ;	Assigns button value to variable Start
+	decfsz Start	    ;	Decreases Start variable,
+	Return		    ;	    skips if button not pressed
+	goto interrupt
 	
-	btfss STATUS,C	    ;	If PORTA < W
-	goto main	    ;	goes to main stopwatch code
+CheckPause		    ;	Checks whether pause button pressed
+	movfw PORTA	    ;	    called when stopwatch is running
+	andlw 0x01	    
+	movwf Pause	    ;	Follows same procedure as CheckStart
+	decfsz Pause
+	Return
+	goto interrupt_Pause
 	
-	goto pause_loop	    ;	Else loops back to start loop
+Unpause			    ;	Checks whether pause button pressed
+	movfw PORTA	    ;	    called when stopwatch is paused
+	andlw 0x01
+	movwf UnPause	    ;	Follows same procedure as CheckStart
+	decfsz UnPause
+	Return
+	goto interrupt_UnPause
+
+CheckReset		    ;	Checks whether reset button pressed
+	movfw PORTA	    ;	    called when stopwatch is paused
+	sublw 0x09
+	movwf Reset1
+	decfsz Reset1	    ;	Follows same procedure as CheckStart
+	goto interrupt_Reset
+	Return
 	
-converter:
-;   Converts COUNTER into DIGIT
-	movfw COUNTER
-	call conversion
-return
-    
-conversion:
+PauseIdle		    ;	Pause loop 
+	call plex_loop	    ;	Multiplexes display
+	call Unpause	    ;	Checks whether pause button pressed
+	call CheckReset	    ;	Checks whether reset
+	goto PauseIdle
+
+	
+interrupt			;   Adds delay to button press so it doesn't
+	call delay_interrupt	;	quickly reset
+	goto display1
+	
+interrupt_Pause			;   Interrupt delay for pause button
+	call delay_interrupt
+	goto PauseIdle
+
+interrupt_UnPause		;   Interrupt delay for unpause
+	call delay_interrupt
+	goto display1
+	
+interrupt_Reset			;   Interrupt delay for reset
+	call delay_interrupt
+	goto preStart
+	
+
+display1			;   Gets required digit for display 1
+	incf COUNTER1,F		;   Increase number counter
+	movfw COUNTER1
+	call conversion		;   Calls conversion table for digit
+	movwf DIGIT1
+	call plex_loop		;   Multiplexes display
+	call timer		;   Calls timer
+	goto display1		;   Loops until it reaches 10
+
+display2			;   Gets required digit for display 2
+	movlw 0xFF
+	movwf COUNTER1		;   Increase number counter
+	incf COUNTER2,F
+	movfw COUNTER2
+	call conversion2	;   Calls conversion table for digit
+	movwf DIGIT2
+	goto display1
+	
+display3			;   Gets required digit for display 3
+	movlw 0xFF
+	movwf COUNTER2
+	incf COUNTER3,F		;   Increase number counter
+	movfw COUNTER3
+	call conversion3	;   Calls conversion table for digit
+	movwf DIGIT3
+	goto display1
+	
+conversion:		    ;	Conversion table for display 1
 	addwf PCL ; add w to the PC (jump)
 	retlw B'01000000' ; 0 return 7 seg code.
 	retlw B'01011110' ; 1
@@ -77,95 +153,93 @@ conversion:
 	retlw B'01011100' ; 7
 	retlw B'00000000' ; 8
 	retlw B'00011000' ; 9
-	movlw B'00000000'
-	movwf COUNTER
-	goto main
+	goto display2
 
-plex_loop:
-;   Flashes between displays
-	movlw B'00000100'
-	movwf PORTA	    ;	Turning on display 1
-	movfw DIGIT1
-	movwf PORTB	    ;	Outputs display 1
-	call plex_delay	    ;	Delay to keep display on
+conversion2:		    ;	Conversion table for display 2
+	addwf PCL ; add w to the PC (jump)
+	retlw B'01000000' ; 0 return 7 seg code.
+	retlw B'01011110' ; 1
+	retlw B'00100100' ; 2
+	retlw B'00001100' ; 3
+	retlw B'00011010' ; 4
+	retlw B'10001000' ; 5
+	retlw B'10000000' ; 6
+	retlw B'01011100' ; 7
+	retlw B'00000000' ; 8
+	retlw B'00011000' ; 9
+	goto display3
+
+conversion3:		    ;	Conversion table for display 3
+	addwf PCL ; add w to the PC (jump)
+	retlw B'01000000' ; 0 return 7 seg code.
+	retlw B'01011110' ; 1
+	retlw B'00100100' ; 2
+	retlw B'00001100' ; 3
+	retlw B'00011010' ; 4
+	retlw B'10001000' ; 5
+	retlw B'10000000' ; 6
+	retlw B'01011100' ; 7
+	retlw B'00000000' ; 8
+	retlw B'00011000' ; 9
+	movlw 0xFF
+	movwf COUNTER3
+	goto display1
 	
-	movlw B'00001000'   
-	movwf PORTA	    ;	Turning on display 2
-	movfw DIGIT2
-	movwf PORTB	    ;	Outputs to display 2
-	call plex_delay	    ;	Delay
+
+plex_loop:		    ;	Cycles through turning on and off each display
+	movlw B'00000010'   ;	Turns on display 1
+	movwf PORTA	   
+	movfw DIGIT1	    ;	Prints DIGIT1
+	movwf PORTB	    
+	call plex_delay	    ;	Gets delay between display plexing
 	
-	movlw B'00000000'
-	movwf PORTA	    ;	Turning off display 2
-	movfw DIGIT3
-	movwf PORTB	    ;	Turning on display 3 and displaying digit
-	call plex_delay
-return
+	movlw B'00000100'   ;	Turns on display 2
+	movwf PORTA	   
+	movfw DIGIT2	    ;	Prints DIGIT2
+	movwf PORTB	    
+	call plex_delay	    
 	
-plex_delay:
-;   Allows time for displays to switch
-;   Initialises plex_delay counter
-	movlw H'F0'
+	movlw B'00001000'   ;	Turns on display 3
+	movwf PORTA
+	movfw DIGIT3	    ;	Turns on DIGIT3
+	movwf PORTB	    
+	call plex_delay	    ;	Gets delay between display plexing
+	return
+	
+plex_delay:		    ;	Delay loop between turning off and on displays
+	movlw H'FF'	    
 	movwf DELAY_PLEX
-    loop
+	loop
 	decfsz DELAY_PLEX,F
 	goto loop
-return
+	return
 
-plex_timer:
-;   Loops plex_loop and keeps time
-;   Initialise delay counters
-	movlw H'FA'
+timer			    ;	Delay loop to increment time accurately
+	call plex_loop	    ;	Multiplexes display output
+	call CheckPause	    ;	Polls for pause button
+	movlw H'FF'
 	movwf DELAY_COUNT1
-	movlw H'60'
-	movwf DELAY_COUNT2
-delay_loop
-;   Check whether start/stop button is pressed
-	movlw B'00000001'
-	subwf PORTA
-	btfsc STATUS,Z		;   If PORTA = W
-	goto pause_loop		;   goes to resetloop if reset button pressed
-
-;   Multiplex the display
-	call plex_loop
-	
-	decfsz DELAY_COUNT1,F	;   inner most loop
-	goto delay_loop		;   decrements and loops until delay_count1=0
-	decfsz DELAY_COUNT2,F	;   middle loop
+	movlw H'05'
+	movwf DELAY_COUNT4
+delay_loop		    ;	Decrements DELAY_COUNT to 0 and moves on
+	decfsz DELAY_COUNT1,F	
 	goto delay_loop
-return
-	
-	
-main:
-;   Initialises TRISA
-	bsf STATUS,5
-	    movlw B'00000011'   ; changed from 00000000
-	    movwf TRISA	    ; sets A pins as inputs and outputs
-	bcf STATUS,5
-    
-;   Calculates PORTB outputs for each display
-    ;	Display 1
-	movfw COUNTER1
-	movwf COUNTER
-	incfsz COUNTER1,F
-	call converter
-	movwf DIGIT1
+	decfsz DELAY_COUNT4,F
+	goto delay_loop
+	return
 
-    ; Display 2
-	movfw COUNTER2
-	movwf COUNTER
-	incfsz COUNTER2,F
-	call converter
-	movwf DIGIT2
+delay_interrupt		    ;	Delay for interrupt to fix buttons
+	movlw H'FF'
+	movwf DELAY_COUNT2
+	movlw H'EF'
+	movwf DELAY_COUNT3
+delay_loop_interrupt	
+	decfsz DELAY_COUNT2,F	
+	goto delay_loop_interrupt
+	decfsz DELAY_COUNT3,F	
+	goto delay_loop_interrupt
+	Return
+
 	
-    ; Display 3
-	movfw COUNTER3
-	movwf COUNTER
-	incfsz COUNTER3,F
-	call converter
-	addlw B'00000001'   ;	Adds output pin for display
-	movwf DIGIT3
 	
-	call plex_timer
-	goto main
 end
